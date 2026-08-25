@@ -42,8 +42,8 @@ var (
 )
 
 const (
-	selectUserColumns = `id, email, password_hash, email_verified_at, last_active_date,
-		distinct_login_days, streak_days, created_at, updated_at`
+	selectUserColumns = `id, email, password_hash, email_verified_at, name, gender, birth_date,
+		last_active_date, distinct_login_days, streak_days, created_at, updated_at`
 
 	insertUserQuery = `
 		INSERT INTO users (email, password_hash, last_active_date, distinct_login_days, streak_days)
@@ -139,6 +139,9 @@ func (r *MySQLRepository) queryOne(ctx context.Context, query string, args ...an
 		rawID      int64
 		rawEmail   string
 		verifiedAt sql.NullTime
+		name       sql.NullString
+		gender     sql.NullString
+		birthDate  sql.NullTime
 		lastActive sql.NullTime
 		user       User
 	)
@@ -148,6 +151,9 @@ func (r *MySQLRepository) queryOne(ctx context.Context, query string, args ...an
 		&rawEmail,
 		&user.PasswordHash,
 		&verifiedAt,
+		&name,
+		&gender,
+		&birthDate,
 		&lastActive,
 		&user.Activity.DistinctLoginDays,
 		&user.Activity.StreakDays,
@@ -169,6 +175,10 @@ func (r *MySQLRepository) queryOne(ctx context.Context, query string, args ...an
 	}
 	if verifiedAt.Valid {
 		user.EmailVerifiedAt = verifiedAt.Time.UTC()
+	}
+	user.Profile = Profile{Name: name.String, Gender: Gender(gender.String)}
+	if birthDate.Valid {
+		user.Profile.BirthDate = UTCDay(birthDate.Time)
 	}
 	if lastActive.Valid {
 		user.Activity.LastActiveDate = UTCDay(lastActive.Time)

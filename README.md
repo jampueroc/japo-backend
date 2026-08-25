@@ -126,6 +126,7 @@ object:
 | POST   | `/api/auth/forgot-password` | public | Email a reset link, always 204 |
 | POST   | `/api/auth/reset-password` | public | Redeem a reset link |
 | GET    | `/api/me`            | Bearer | Identity + progress document in one call |
+| PUT    | `/api/profile`       | Bearer | Store the onboarding identity            |
 | GET    | `/api/progress`      | Bearer | Read the caller's document               |
 | PUT    | `/api/progress`      | Bearer | Create or replace the caller's document  |
 | PATCH  | `/api/progress`      | Bearer | Merge the caller's own members           |
@@ -153,6 +154,32 @@ object:
 
 `GET /api/me` returns `{ "user": …, "progress": … }`, where `progress` is
 `null` until the first save — it is the single call a client needs at boot.
+
+### The profile
+
+`PUT /api/profile` stores the identity captured during onboarding and returns
+the user. It is idempotent, and it does **not** count as activity: filling in a
+form is not practising, and letting it move the streak would make the streak
+mean something else.
+
+```jsonc
+{ "name": "ホルヘ", "gender": "neutral", "birthday": "1990-03-14" }
+```
+
+- `name` is trimmed, 1–80 characters, any script — the app is about Japanese,
+  so rejecting non-ASCII names would be an own goal — and refuses control
+  characters, which otherwise end up in an email header or a heading.
+- `gender` is one of `male`, `female`, `neutral`. English tokens like every
+  other value here: what the interface shows is a translation the client owns,
+  and storing display text would tie the database to whatever language the app
+  happened to speak that year. It is a short string rather than a SQL enum, so
+  adding an option is a deploy of the client, not a migration.
+- `birthday` is optional, `YYYY-MM-DD`, not in the future and not before 1900.
+
+The profile rides **inside** the user (`user.profile`), not beside it, so it
+cannot drift out of sync between the four endpoints that return a user:
+register, login, verify-email and `/me`. It is `null` until onboarding is
+done, which is what tells a client to show the form.
 
 ### The progress document
 

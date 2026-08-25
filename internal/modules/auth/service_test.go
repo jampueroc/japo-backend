@@ -49,6 +49,8 @@ type stubRepository struct {
 	lastTouchDay     time.Time
 	lastCreated      auth.User
 	updatedPasswords []string
+	savedProfiles    []auth.Profile
+	saveProfileErr   error
 }
 
 // stubSecretStore backs both the verification codes and the reset tokens: one
@@ -201,6 +203,20 @@ func (s *stubRepository) MarkEmailVerified(_ context.Context, id valueobject.ID,
 		StreakDays:        1,
 	})
 	user.EmailVerifiedAt = at
+	return user, nil
+}
+
+func (s *stubRepository) SaveProfile(_ context.Context, _ valueobject.ID, profile auth.Profile) (auth.User, error) {
+	if s.saveProfileErr != nil {
+		return auth.User{}, s.saveProfileErr
+	}
+	s.savedProfiles = append(s.savedProfiles, profile)
+	if s.state != nil {
+		s.state.Profile = profile
+		return *s.state, nil
+	}
+	user := existingUserWithActivity(auth.Activity{})
+	user.Profile = profile
 	return user, nil
 }
 

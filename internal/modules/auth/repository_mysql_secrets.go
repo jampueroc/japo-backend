@@ -19,6 +19,8 @@ const (
 
 	updatePasswordQuery = `UPDATE users SET password_hash = ? WHERE id = ?`
 
+	saveProfileQuery = `UPDATE users SET name = ?, gender = ?, birth_date = ? WHERE id = ?`
+
 	putVerificationQuery = `
 		INSERT INTO email_verification_codes (user_id, code_hash, attempts, expires_at, consumed_at)
 		VALUES (?, ?, 0, ?, NULL)
@@ -77,6 +79,31 @@ func (r *MySQLRepository) UpdatePassword(ctx context.Context, id valueobject.ID,
 		return fmt.Errorf("update password: %w", err)
 	}
 	return requireOneRow(result, "update password")
+}
+
+// SaveProfile stores the onboarding identity, replacing whatever was there.
+// It is a full replacement rather than a merge: the client always sends the
+// three fields together, so a partial write would only invite a stale copy to
+// blank out what the user just typed.
+func (r *MySQLRepository) SaveProfile(ctx context.Context, id valueobject.ID, profile Profile) (User, error) {
+	var birthDate any
+	if !profile.BirthDate.IsZero() {
+		birthDate = profile.BirthDate.UTC().Format(dateLayout)
+	}
+
+	result, err := r.db.ExecContext(ctx, saveProfileQuery,
+		profile.Name, string(profile.Gender), birthDate, id.Int64())
+	if err != nil {
+		return User{}, fmt.Errorf("save profile: %w", err)
+	}
+	// RowsAffected is 0 when the values are unchanged, which is a perfectly
+	// good idempotent write, so the read below is what proves the account
+	// exists.
+	if _, err := result.RowsAffected(); err != nil {
+		return User{}, fmt.Errorf("save profile: read affected rows: %w", err)
+	}
+
+	return r.FindByID(ctx, id)
 }
 
 // PutVerification stores a code, replacing any previous one and resetting the

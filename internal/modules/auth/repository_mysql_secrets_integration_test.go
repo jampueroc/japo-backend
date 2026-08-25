@@ -262,3 +262,69 @@ func TestMySQLRepositoryPasswordReset(t *testing.T) {
 		}
 	})
 }
+
+func TestMySQLRepositoryProfile(t *testing.T) {
+	testsupport.Truncate(t, testDB, "progress", "email_verification_codes", "password_reset_tokens", "users")
+
+	ctx := context.Background()
+	repo := auth.NewMySQLRepository(testDB)
+	user := seedAccount(t, repo, "profile@example.com")
+
+	if user.Profile.Complete() {
+		t.Fatal("a fresh account already reports a profile")
+	}
+
+	birthDate := time.Date(1990, 3, 14, 0, 0, 0, 0, time.UTC)
+	profile := auth.Profile{Name: "ホルヘ", Gender: auth.GenderNeutral, BirthDate: birthDate}
+
+	saved, err := repo.SaveProfile(ctx, user.ID, profile)
+	if err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+	if saved.Profile != profile {
+		t.Fatalf("got profile %+v, want %+v", saved.Profile, profile)
+	}
+
+	t.Run("survives a re-read", func(t *testing.T) {
+		stored, err := repo.FindByEmail(ctx, valueobject.MustEmail("profile@example.com"))
+		if err != nil {
+			t.Fatalf("find by email: %v", err)
+		}
+		// The name is Japanese on purpose: it is the case that breaks when a
+		// column or a connection is not utf8mb4 all the way through.
+		if stored.Profile.Name != "ホルヘ" {
+			t.Fatalf("got name %q, want it intact", stored.Profile.Name)
+		}
+		if !stored.Profile.BirthDate.Equal(birthDate) {
+			t.Fatalf("got birth date %v, want %v", stored.Profile.BirthDate, birthDate)
+		}
+	})
+
+	t.Run("writing it again is idempotent", func(t *testing.T) {
+		again, err := repo.SaveProfile(ctx, user.ID, profile)
+		if err != nil {
+			t.Fatalf("save profile again: %v", err)
+		}
+		if again.Profile != profile {
+			t.Fatalf("got profile %+v, want it unchanged", again.Profile)
+		}
+	})
+
+	t.Run("a birthday can be dropped", func(t *testing.T) {
+		without := auth.Profile{Name: "ホルヘ", Gender: auth.GenderNeutral}
+		saved, err := repo.SaveProfile(ctx, user.ID, without)
+		if err != nil {
+			t.Fatalf("save profile: %v", err)
+		}
+		if !saved.Profile.BirthDate.IsZero() {
+			t.Fatalf("got birth date %v, want it cleared", saved.Profile.BirthDate)
+		}
+	})
+
+	t.Run("an account that does not exist", func(t *testing.T) {
+		_, err := repo.SaveProfile(ctx, valueobject.ID(999999), profile)
+		if !errors.Is(err, auth.ErrUserNotFound) {
+			t.Fatalf("got error %v, want %v", err, auth.ErrUserNotFound)
+		}
+	})
+}

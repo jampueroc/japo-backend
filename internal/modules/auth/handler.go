@@ -154,6 +154,34 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 	return httpx.OK(c, newMeResponse(me))
 }
 
+// SaveProfile handles PUT /profile: the identity captured during onboarding.
+func (h *Handler) SaveProfile(c *fiber.Ctx) error {
+	userID, err := middleware.UserID(c)
+	if err != nil {
+		return httpx.Fail(c, h.logger, err)
+	}
+
+	var req ProfileRequest
+	if err := httpx.ParseBody(c, &req); err != nil {
+		return httpx.Fail(c, h.logger, err)
+	}
+	if err := h.validator.Struct(req); err != nil {
+		return httpx.Fail(c, h.logger, err)
+	}
+
+	profile, err := req.profile()
+	if err != nil {
+		return httpx.Fail(c, h.logger, toHTTPError(err))
+	}
+
+	saved, err := h.service.SaveProfile(c.UserContext(), userID, profile)
+	if err != nil {
+		return httpx.Fail(c, h.logger, toHTTPError(err))
+	}
+
+	return httpx.OK(c, NewUserResponse(saved))
+}
+
 // Logout handles POST /auth/logout. Access tokens are stateless and there is
 // no denylist, so this cannot revoke anything: the real logout is the client
 // dropping the token. The endpoint exists so the client has a symmetric API

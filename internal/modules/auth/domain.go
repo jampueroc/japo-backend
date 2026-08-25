@@ -67,11 +67,57 @@ type Activity struct {
 	StreakDays int
 }
 
+// Gender is how the user asked to be addressed. The values are English
+// tokens, like every other value in this API: what the interface shows is a
+// translation the client owns, and storing display text would tie the
+// database to whatever language the app happened to speak that year.
+type Gender string
+
+// The values a profile accepts.
+const (
+	GenderMale    Gender = "male"
+	GenderFemale  Gender = "female"
+	GenderNeutral Gender = "neutral"
+)
+
+// Valid reports whether g is one this server stores.
+func (g Gender) Valid() bool {
+	switch g {
+	case GenderMale, GenderFemale, GenderNeutral:
+		return true
+	default:
+		return false
+	}
+}
+
+// Profile is the identity the user fills in during onboarding. It is empty
+// until they do.
+type Profile struct {
+	Name   string
+	Gender Gender
+	// BirthDate is the zero value when the user did not give one.
+	BirthDate time.Time
+}
+
+// Complete reports whether onboarding has been done. The name is what marks
+// it: an account with no name has not been through it.
+func (p Profile) Complete() bool { return p.Name != "" }
+
+// Profile limits.
+const (
+	// MaxProfileNameLength matches the users.name column.
+	MaxProfileNameLength = 80
+	// MinBirthYear rejects a date that is obviously a typo rather than a
+	// birthday.
+	MinBirthYear = 1900
+)
+
 // User is the account entity.
 type User struct {
 	ID           valueobject.ID
 	Email        valueobject.Email
 	PasswordHash string
+	Profile      Profile
 	Activity     Activity
 	// EmailVerifiedAt is the zero value until the address is confirmed.
 	EmailVerifiedAt time.Time
@@ -164,6 +210,8 @@ type Repository interface {
 	MarkEmailVerified(ctx context.Context, id valueobject.ID, at time.Time) (User, error)
 	// UpdatePassword replaces the stored hash.
 	UpdatePassword(ctx context.Context, id valueobject.ID, passwordHash string) error
+	// SaveProfile stores the onboarding identity and returns the user.
+	SaveProfile(ctx context.Context, id valueobject.ID, profile Profile) (User, error)
 }
 
 // VerificationRepository stores the live email verification codes.
@@ -226,6 +274,9 @@ type Service interface {
 	FindByID(ctx context.Context, userID int64) (User, error)
 	// Me returns the identity plus the progress document.
 	Me(ctx context.Context, userID int64) (Me, error)
+	// SaveProfile stores the onboarding identity. It is idempotent and
+	// does not count as activity.
+	SaveProfile(ctx context.Context, userID int64, profile Profile) (User, error)
 	// RecordActivity marks the user as active today. Other modules reach
 	// it through a port of their own, wired at the composition root.
 	RecordActivity(ctx context.Context, userID int64) (User, error)

@@ -2,7 +2,10 @@ package auth
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
+
+	"github.com/jorgeampuero/japo-backend/internal/shared/apperror"
 )
 
 // dateLayoutJSON is how a calendar day is rendered to the client: a plain
@@ -29,6 +32,40 @@ func (r RegisterRequest) credentials() Credentials { return Credentials(r) }
 // credentials maps the DTO onto the use case input.
 func (r LoginRequest) credentials() Credentials { return Credentials(r) }
 
+// ProfileResponse is the identity captured during onboarding. It is null in
+// the wire until the user has been through it.
+type ProfileResponse struct {
+	Name   string `json:"name"`
+	Gender string `json:"gender"`
+	// Birthday is a plain YYYY-MM-DD, or absent when not given.
+	Birthday string `json:"birthday,omitempty"`
+}
+
+// ProfileRequest is the PUT /profile payload.
+type ProfileRequest struct {
+	Name   string `json:"name" validate:"required,notblank,min=1,max=80"`
+	Gender string `json:"gender" validate:"required,oneof=male female neutral"`
+	// Birthday is optional. An empty string and a missing field both mean
+	// "not given".
+	Birthday string `json:"birthday" validate:"omitempty,datetime=2006-01-02"`
+}
+
+// profile maps the DTO onto the use case input.
+func (r ProfileRequest) profile() (Profile, error) {
+	result := Profile{Name: r.Name, Gender: Gender(r.Gender)}
+	if strings.TrimSpace(r.Birthday) == "" {
+		return result, nil
+	}
+
+	birthDate, err := time.Parse(dateLayoutJSON, r.Birthday)
+	if err != nil {
+		return Profile{}, apperror.Validation("invalid_profile",
+			"the birthday must be a date in the form YYYY-MM-DD").WithCause(err)
+	}
+	result.BirthDate = birthDate.UTC()
+	return result, nil
+}
+
 // UserResponse is the public projection of a user: no password hash ever
 // leaves the service. The activity counters travel with it because the web
 // client derives unlocks from them.
@@ -40,6 +77,10 @@ type UserResponse struct {
 	LastActiveDate    string    `json:"lastActiveDate,omitempty"`
 	DistinctLoginDays int       `json:"distinctLoginDays"`
 	StreakDays        int       `json:"streakDays"`
+	// Profile is null until onboarding is done. It lives inside the user
+	// rather than beside it so it cannot drift out of sync between the four
+	// endpoints that return one.
+	Profile *ProfileResponse `json:"profile"`
 }
 
 // SessionResponse is returned by register, login and verify-email. When the
@@ -92,6 +133,16 @@ func NewUserResponse(user User) UserResponse {
 	}
 	if !user.Activity.LastActiveDate.IsZero() {
 		response.LastActiveDate = user.Activity.LastActiveDate.UTC().Format(dateLayoutJSON)
+	}
+	if user.Profile.Complete() {
+		profile := ProfileResponse{
+			Name:   user.Profile.Name,
+			Gender: string(user.Profile.Gender),
+		}
+		if !user.Profile.BirthDate.IsZero() {
+			profile.Birthday = user.Profile.BirthDate.UTC().Format(dateLayoutJSON)
+		}
+		response.Profile = &profile
 	}
 	return response
 }

@@ -39,6 +39,11 @@ func RegisterRoutes(router fiber.Router, h *Handler, guards RouteGuards) {
 	// The caller's own identity, behind the token guard.
 	me := router.Group("/me", guards.Authenticated...)
 	me.Get("/", h.Me)
+
+	// Onboarding. A full replacement rather than a patch: the client sends
+	// the three fields together.
+	profile := router.Group("/profile", guards.Authenticated...)
+	profile.Put("/", h.SaveProfile)
 }
 
 // chain puts the middlewares in front of the handler without aliasing the
