@@ -1,0 +1,87 @@
+# Two independent services on purpose:
+#
+#   docker compose up -d mariadb   -> only the database (macOS development,
+#                                     the API then runs natively with
+#                                     `make dev` and DB_HOST=localhost)
+#   docker compose up -d           -> database + API (Raspberry Pi deploy)
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: japo-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root}
+      MARIADB_DATABASE: ${DB_NAME:-japo}
+      MARIADB_USER: ${DB_USER:-japo}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-japo}
+    ports:
+      # Published so the natively running API (macOS dev) can reach it.
+      # Remove this block on the Pi if only the api container talks to it.
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./my.cnf:/etc/mysql/conf.d/99-japo.cnf:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # Hard cap so MariaDB can never starve the Pi.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGETARCH: ${TARGETARCH:-arm64}
+        VERSION: ${VERSION:-dev}
+    image: ${API_IMAGE:-japo-api}:${API_TAG:-latest}
+    container_name: japo-api
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      HTTP_PORT: 8080
+      # Inside the compose network the database is reachable by service name.
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-japo}
+      DB_USER: ${DB_USER:-japo}
+      DB_PASSWORD: ${DB_PASSWORD:-japo}
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-10}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-5}
+      DB_AUTO_MIGRATE: ${DB_AUTO_MIGRATE:-true}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set, see .env.example}
+      JWT_TTL: ${JWT_TTL:-1h}
+      BCRYPT_COST: ${BCRYPT_COST:-10}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  mariadb_data:
+    # Default: a named volume managed by Docker (fine on macOS).
+    #
+    # On the Raspberry Pi, put the data on the external SSD instead by
+    # uncommenting the block below and pointing `device` at a directory that
+    # already exists on the mounted disk:
+    #
+    # driver: local
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /mnt/ssd/japo/mariadb
