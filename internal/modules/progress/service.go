@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -205,11 +206,24 @@ func (s *service) Merge(ctx context.Context, userID int64, patch json.RawMessage
 		return Progress{}, err
 	}
 
+	// The field NAMES, not just how many: when a patch overwrites something
+	// unexpected, the first question is always which member it carried.
+	// Names only, never the values, which are the client's business.
 	s.logger.InfoContext(ctx, "progress patched",
 		slog.Int64("user_id", id.Int64()),
-		slog.Int("fields", len(changes)),
+		slog.String("fields", strings.Join(sortedKeys(changes), ",")),
 	)
 	return saved, nil
+}
+
+// sortedKeys lists a patch's members in a stable order for the log.
+func sortedKeys(changes document) []string {
+	fields := make([]string, 0, len(changes))
+	for field := range changes {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 // parsePatch reads the partial document, rejecting anything that is not a
