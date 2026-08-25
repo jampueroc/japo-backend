@@ -9,6 +9,8 @@ func RegisterRoutes(router fiber.Router, h *Handler, guards ...fiber.Handler) {
 	group := router.Group("/progress", guards...)
 	group.Get("/", h.Get)
 	group.Put("/", h.Save)
+	// Merge the client's own members without touching the server's.
+	group.Patch("/", h.Merge)
 	// Server side grading: these recalculate the document instead of
 	// replacing it, so they are safe against concurrent writers.
 	group.Post("/answer", h.Answer)

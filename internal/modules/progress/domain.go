@@ -42,6 +42,17 @@ var (
 	ErrInvalidAnswer = errors.New("invalid answer")
 	// ErrInvalidLesson means the lesson identifier is malformed.
 	ErrInvalidLesson = errors.New("invalid lesson identifier")
+	// ErrProtectedField means a patch tried to write a member the server
+	// computes itself.
+	ErrProtectedField = errors.New("protected progress field")
+	// ErrEmptyPatch means the patch carries no members to merge.
+	ErrEmptyPatch = errors.New("empty progress patch")
+	// ErrUnreadablePatch means the request body is not a JSON object. It is
+	// deliberately distinct from ErrUnreadableDocument: one blames the
+	// caller, the other blames what is already stored, and answering a bad
+	// request with "your stored document is broken" sends whoever is
+	// debugging it in exactly the wrong direction.
+	ErrUnreadablePatch = errors.New("unreadable progress patch")
 )
 
 // MaxLessonIDLength bounds a lesson identifier. The catalogue of lessons
@@ -113,4 +124,8 @@ type Service interface {
 	// CompleteLesson adds a lesson to the completed list, atomically and
 	// without duplicates.
 	CompleteLesson(ctx context.Context, userID int64, lessonID string) (Progress, error)
+	// Merge replaces the given top level members of the document and
+	// leaves every other one alone. It is how a client keeps state of its
+	// own next to the parts the server owns.
+	Merge(ctx context.Context, userID int64, patch json.RawMessage) (Progress, error)
 }

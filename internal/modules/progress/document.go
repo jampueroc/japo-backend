@@ -38,6 +38,41 @@ const (
 	fieldAttempts      = "recentAttempts"
 )
 
+// protectedFields are the members the server computes. A patch that carried
+// them would silently overwrite a mastery or an attempt window the client had
+// no business recalculating, usually because it sent a copy it had gone stale
+// on. Rejecting them turns that mistake into an error instead of data loss.
+//
+// This is a guard against accidents, not a security boundary: PUT still
+// replaces the whole document, because the guest to account migration has to
+// be able to write all of it.
+var protectedFields = map[string]struct{}{
+	fieldSchemaVersion: {},
+	fieldMastery:       {},
+	fieldSkills:        {},
+	fieldAttempts:      {},
+}
+
+// merge replaces each member of the patch, leaving the rest of the document
+// untouched. The replacement is per top level key: sending srsByKana swaps
+// the whole map, which is what makes removing an entry expressible at all.
+func (d document) merge(patch document) error {
+	if len(patch) == 0 {
+		return fmt.Errorf("%w: nothing to merge", ErrEmptyPatch)
+	}
+
+	for field := range patch {
+		if _, protected := protectedFields[field]; protected {
+			return fmt.Errorf("%w: %s is maintained by the server", ErrProtectedField, field)
+		}
+	}
+
+	for field, value := range patch {
+		d[field] = value
+	}
+	return nil
+}
+
 // Attempt is one answer, as stored in the rolling window. Kana, Skill and
 // Chosen are omitted when empty so that a v1 entry, read and written back
 // untouched, does not sprout meaningless keys.

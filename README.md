@@ -128,6 +128,7 @@ object:
 | GET    | `/api/me`            | Bearer | Identity + progress document in one call |
 | GET    | `/api/progress`      | Bearer | Read the caller's document               |
 | PUT    | `/api/progress`      | Bearer | Create or replace the caller's document  |
+| PATCH  | `/api/progress`      | Bearer | Merge the caller's own members           |
 | POST   | `/api/progress/answer` | Bearer | Grade one attempt server side          |
 | POST   | `/api/progress/lesson-complete` | Bearer | Mark a lesson complete        |
 
@@ -172,6 +173,34 @@ curl -X PUT localhost:8080/api/progress \
 `PUT` is a full-document upsert (one row per user, `INSERT … ON DUPLICATE KEY
 UPDATE`) and therefore last-write-wins. That is correct for one user on one
 device; concurrent writers would need an `updatedAt` precondition.
+
+### Patching your own members
+
+`PUT` replaces the whole document, which means a client that keeps state of its
+own — a review schedule, say — would have to send everything back and race with
+itself. `PATCH` exists for that: it replaces the given **top-level** members and
+leaves every other one alone, inside the same locked transaction as the grading
+endpoints.
+
+```bash
+curl -X PATCH localhost:8080/api/progress \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"srsByKana":{"し":{"box":0,"dueAt":1756150000000}}}'
+```
+
+The merge is per key, not deep: sending `srsByKana` swaps the whole map, which
+is what makes *removing* an entry expressible at all.
+
+`masteryByKana`, `skillsByKana`, `recentAttempts` and `schemaVersion` are
+refused with 400 `protected_field`, and one of them poisons the whole patch —
+nothing is written. That is a guard against a client overwriting server-computed
+state with a stale copy, **not** a security boundary: `PUT` still replaces
+everything, because the guest-to-account migration has to be able to write all
+of it.
+
+A patch does not count as activity. It is a background sync of something the
+user already did, and the call that did it recorded the day; counting it again
+would let a sync extend a streak on its own.
 
 ### Server-side grading
 

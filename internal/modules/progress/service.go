@@ -179,6 +179,63 @@ func (s *service) CompleteLesson(ctx context.Context, userID int64, lessonID str
 	return saved, nil
 }
 
+// Merge replaces the given top level members and leaves the rest of the
+// document alone. It exists because /answer only rewrites the members it
+// understands: without it, a client with state of its own (a review
+// schedule, say) would have to PUT the whole document and race with itself.
+//
+// It deliberately does NOT count as activity. A patch is a background sync of
+// something the user already did, and the call that did it recorded the day
+// already; counting it again would let a sync extend a streak on its own.
+func (s *service) Merge(ctx context.Context, userID int64, patch json.RawMessage) (Progress, error) {
+	id, err := valueobject.NewID(userID)
+	if err != nil {
+		return Progress{}, err
+	}
+
+	changes, err := parsePatch(patch)
+	if err != nil {
+		return Progress{}, err
+	}
+
+	saved, err := s.mutate(ctx, id, func(doc document) error {
+		return doc.merge(changes)
+	})
+	if err != nil {
+		return Progress{}, err
+	}
+
+	s.logger.InfoContext(ctx, "progress patched",
+		slog.Int64("user_id", id.Int64()),
+		slog.Int("fields", len(changes)),
+	)
+	return saved, nil
+}
+
+// parsePatch reads the partial document, rejecting anything that is not a
+// JSON object with at least one member.
+func parsePatch(patch json.RawMessage) (document, error) {
+	if len(patch) == 0 {
+		return nil, fmt.Errorf("%w: the request body is empty", ErrEmptyPatch)
+	}
+	if len(patch) > MaxDataSize {
+		return nil, apperror.Validation("invalid_progress_data",
+			fmt.Sprintf("the patch must be at most %d bytes", MaxDataSize))
+	}
+
+	var changes document
+	if err := json.Unmarshal(patch, &changes); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnreadablePatch, err)
+	}
+	if changes == nil {
+		return nil, fmt.Errorf("%w: the patch is not a JSON object", ErrUnreadablePatch)
+	}
+	if len(changes) == 0 {
+		return nil, fmt.Errorf("%w: no members to merge", ErrEmptyPatch)
+	}
+	return changes, nil
+}
+
 // mutate runs a server side change through the repository transaction,
 // translating the document between raw bytes and the parsed view.
 func (s *service) mutate(ctx context.Context, id valueobject.ID, apply func(doc document) error) (Progress, error) {
@@ -279,6 +336,9 @@ func isKnown(err error) bool {
 	var appErr *apperror.Error
 	return errors.Is(err, ErrProgressNotFound) ||
 		errors.Is(err, ErrUnknownOwner) ||
+		errors.Is(err, ErrProtectedField) ||
+		errors.Is(err, ErrEmptyPatch) ||
+		errors.Is(err, ErrUnreadablePatch) ||
 		errors.Is(err, ErrUnreadableDocument) ||
 		errors.Is(err, ErrUnsupportedSchema) ||
 		errors.Is(err, ErrInvalidAnswer) ||

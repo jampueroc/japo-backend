@@ -160,6 +160,12 @@ func TestServiceRecordAnswerScoring(t *testing.T) {
 		if got := storedSkills(t, repo, "い").Recognition; got != 0 {
 			t.Fatalf("got い recognition %d, want 0", got)
 		}
+		// Both are only discovered, but for different reasons: あ has a hit
+		// behind it and い a miss. The point is that one does not move the
+		// other.
+		if got := storedMastery(t, repo, "い"); got != progress.MasteryDiscovered {
+			t.Fatalf("got い mastery %q, want %q", got, progress.MasteryDiscovered)
+		}
 	})
 }
 
@@ -508,4 +514,109 @@ func storedVersion(t *testing.T, repo *stubRepository) int {
 		t.Fatalf("schemaVersion is malformed: %v", err)
 	}
 	return version
+}
+
+// --- PATCH -----------------------------------------------------------------
+
+// The point of the patch is that a client can keep state of its own next to
+// the parts the server owns, without a full PUT and the race that comes with it.
+func TestServiceMerge(t *testing.T) {
+	t.Parallel()
+
+	const stored = `{"schemaVersion":2,` +
+		`"masteryByKana":{"あ":"learning"},` +
+		`"skillsByKana":{"あ":{"recognition":40,"writing":0,"listening":0,"reading":0}},` +
+		`"completedLessonIds":["l1"],` +
+		`"recentAttempts":[{"kana":"あ","skill":"recognition","correct":true,"at":"2026-08-01T10:00:00Z"}],` +
+		`"srsByKana":{"あ":{"box":1}}}`
+
+	t.Run("replaces the given member and leaves the rest alone", func(t *testing.T) {
+		t.Parallel()
+
+		repo := &stubRepository{stored: json.RawMessage(stored)}
+		service := newService(repo, nil)
+
+		if _, err := service.Merge(context.Background(), 42,
+			json.RawMessage(`{"srsByKana":{"し":{"box":0}},"settings":{"theme":"dark"}}`)); err != nil {
+			t.Fatalf("merge: %v", err)
+		}
+
+		doc := storedDocument(t, repo)
+		// The patched member is REPLACED, not deep merged: that is what
+		// makes removing あ from the schedule expressible at all.
+		if got := string(doc["srsByKana"]); got != `{"し":{"box":0}}` {
+			t.Fatalf("got srsByKana %s, want it replaced wholesale", got)
+		}
+		if got := string(doc["settings"]); got != `{"theme":"dark"}` {
+			t.Fatalf("got settings %s, want the new member added", got)
+		}
+		// Everything the server owns survived untouched.
+		if storedMastery(t, repo, "あ") != "learning" {
+			t.Fatalf("mastery was disturbed: %s", doc["masteryByKana"])
+		}
+		if got := storedSkills(t, repo, "あ").Recognition; got != 40 {
+			t.Fatalf("got あ recognition %d, want the stored 40", got)
+		}
+		if len(storedAttempts(t, repo)) != 1 {
+			t.Fatalf("the attempt window was disturbed: %s", doc["recentAttempts"])
+		}
+		if got := string(doc["completedLessonIds"]); got != `["l1"]` {
+			t.Fatalf("got completedLessonIds %s, want them untouched", got)
+		}
+	})
+
+	t.Run("a patch does not count as activity", func(t *testing.T) {
+		t.Parallel()
+
+		// A patch is a background sync of something the user already did.
+		// Counting it would let it extend a streak on its own.
+		recorder := &stubRecorder{}
+		service := newService(&stubRepository{stored: json.RawMessage(stored)}, recorder)
+
+		if _, err := service.Merge(context.Background(), 42,
+			json.RawMessage(`{"srsByKana":{}}`)); err != nil {
+			t.Fatalf("merge: %v", err)
+		}
+		if recorder.calls != 0 {
+			t.Fatalf("RecordActivity called %d times, want 0", recorder.calls)
+		}
+	})
+
+	tests := []struct {
+		name    string
+		patch   string
+		wantErr error
+	}{
+		{name: "mastery is the server's", patch: `{"masteryByKana":{"あ":"mastered"}}`, wantErr: progress.ErrProtectedField},
+		{name: "so are the scores", patch: `{"skillsByKana":{}}`, wantErr: progress.ErrProtectedField},
+		{name: "so is the attempt window", patch: `{"recentAttempts":[]}`, wantErr: progress.ErrProtectedField},
+		{name: "so is the schema version", patch: `{"schemaVersion":9}`, wantErr: progress.ErrProtectedField},
+		{name: "one protected member poisons the whole patch",
+			patch: `{"srsByKana":{},"masteryByKana":{}}`, wantErr: progress.ErrProtectedField},
+		{name: "an empty object", patch: `{}`, wantErr: progress.ErrEmptyPatch},
+		{name: "an empty body", patch: ``, wantErr: progress.ErrEmptyPatch},
+		// A bad body must NOT be reported as a broken stored document: that
+		// sends whoever is debugging it looking at the wrong thing.
+		{name: "an array", patch: `["nope"]`, wantErr: progress.ErrUnreadablePatch},
+		{name: "malformed json", patch: `{"srsByKana":`, wantErr: progress.ErrUnreadablePatch},
+		{name: "a bare string", patch: `"nope"`, wantErr: progress.ErrUnreadablePatch},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &stubRepository{stored: json.RawMessage(stored)}
+			service := newService(repo, nil)
+
+			_, err := service.Merge(context.Background(), 42, json.RawMessage(tc.patch))
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("got error %v, want %v", err, tc.wantErr)
+			}
+			// A rejected patch must change nothing at all.
+			if string(repo.stored) != stored {
+				t.Fatalf("the document was modified by a rejected patch:\n%s", repo.stored)
+			}
+		})
+	}
 }

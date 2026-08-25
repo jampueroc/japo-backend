@@ -60,6 +60,23 @@ func (h *Handler) Save(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).Type("json").Send(saved.Data)
 }
 
+// Merge handles PATCH /progress: replace some top level members of the
+// document and leave the rest alone. The body is a partial document and stays
+// opaque, exactly like the one PUT takes.
+func (h *Handler) Merge(c *fiber.Ctx) error {
+	userID, err := middleware.UserID(c)
+	if err != nil {
+		return httpx.Fail(c, h.logger, err)
+	}
+
+	saved, err := h.service.Merge(c.UserContext(), userID, documentFromBody(c.Body()))
+	if err != nil {
+		return httpx.Fail(c, h.logger, toHTTPError(err))
+	}
+
+	return c.Status(fiber.StatusOK).Type("json").Send(saved.Data)
+}
+
 // Answer handles POST /progress/answer: one graded attempt, scored server
 // side.
 func (h *Handler) Answer(c *fiber.Ctx) error {
@@ -116,6 +133,15 @@ func toHTTPError(err error) error {
 		return apperror.Unauthorized("invalid_token", "the account in the access token no longer exists").WithCause(err)
 	case errors.Is(err, ErrInvalidAnswer):
 		return apperror.Validation("invalid_answer", "the kana or the skill is not one this server can score").WithCause(err)
+	case errors.Is(err, ErrProtectedField):
+		return apperror.Validation("protected_field",
+			"that field is maintained by the server and cannot be patched").WithCause(err)
+	case errors.Is(err, ErrUnreadablePatch):
+		return apperror.Validation("invalid_patch",
+			"the patch must be a JSON object of fields to merge").WithCause(err)
+	case errors.Is(err, ErrEmptyPatch):
+		return apperror.Validation("empty_patch",
+			"the patch must be a JSON object with at least one field").WithCause(err)
 	case errors.Is(err, ErrInvalidLesson):
 		return apperror.Validation("invalid_lesson", "the lesson identifier is not valid").WithCause(err)
 	case errors.Is(err, ErrUnsupportedSchema):
