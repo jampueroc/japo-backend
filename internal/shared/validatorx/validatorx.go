@@ -113,6 +113,20 @@ func validateNotBlank(fl validator.FieldLevel) bool {
 	return strings.TrimSpace(fl.Field().String()) != ""
 }
 
+// humanDateLayout turns a Go reference layout into the placeholder people
+// actually recognise: 2006-01-02 becomes YYYY-MM-DD.
+func humanDateLayout(layout string) string {
+	replacer := strings.NewReplacer(
+		"2006", "YYYY",
+		"01", "MM",
+		"02", "DD",
+		"15", "hh",
+		"04", "mm",
+		"05", "ss",
+	)
+	return replacer.Replace(layout)
+}
+
 func messageFor(fieldErr validator.FieldError) string {
 	switch fieldErr.Tag() {
 	case "required":
@@ -132,6 +146,10 @@ func messageFor(fieldErr validator.FieldError) string {
 		return "must not be blank"
 	case "oneof":
 		return fmt.Sprintf("must be one of: %s", strings.ReplaceAll(fieldErr.Param(), " ", ", "))
+	case "datetime":
+		// The parameter is a Go layout, which means nothing to whoever is
+		// filling in the form: show it as the pattern they have to type.
+		return fmt.Sprintf("must be a date in the form %s", humanDateLayout(fieldErr.Param()))
 	case "json":
 		return "must be valid JSON"
 	default:

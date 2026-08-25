@@ -118,3 +118,27 @@ func TestValidatorPasswordNeedsALetterAndADigit(t *testing.T) {
 		t.Fatalf("rejected a valid password: %v", err)
 	}
 }
+
+// A Go reference layout in an error message is meaningless to whoever is
+// filling in the form.
+func TestValidatorExplainsDateFormatsInHumanTerms(t *testing.T) {
+	t.Parallel()
+
+	type payload struct {
+		Birthday string `json:"birthday" validate:"omitempty,datetime=2006-01-02"`
+	}
+
+	v := newValidator(t)
+	if err := v.Struct(payload{Birthday: "1990-03-14"}); err != nil {
+		t.Fatalf("rejected a valid date: %v", err)
+	}
+
+	err := v.Struct(payload{Birthday: "14/03/1990"})
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		t.Fatalf("got %v, want an application error", err)
+	}
+	if want := "must be a date in the form YYYY-MM-DD"; appErr.Fields[0].Message != want {
+		t.Fatalf("got message %q, want %q", appErr.Fields[0].Message, want)
+	}
+}
