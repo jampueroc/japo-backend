@@ -1,0 +1,22 @@
+# Build artefacts
+bin/
+*.exe
+
+# Local configuration (never commit real secrets)
+.env
+.env.local
+
+# Local database data when the volume is bind mounted
+data/
+
+# macOS
+.DS_Store
+._*
+
+# Editors
+.idea/
+.vscode/
+
+# Local tooling config (.mcp.json holds credentials, never commit it)
+.mcp.json
+.claude/

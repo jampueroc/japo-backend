@@ -1,0 +1,21 @@
+# Keep the build context small: only the sources are needed.
+.git
+.gitignore
+.github
+.claude
+.mcp.json
+.env
+.env.*
+!.env.example
+bin/
+data/
+*.log
+*.md
+!README.md
+Makefile
+docker-compose.yml
+my.cnf
+.golangci.yml
+# macOS metadata sidecar files (exFAT volumes create these).
+.DS_Store
+._*

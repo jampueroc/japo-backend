@@ -1,0 +1,38 @@
+# Configuration for `make lint` (golangci-lint run).
+# Install on macOS with: brew install golangci-lint
+version: "2"
+
+run:
+  timeout: 3m
+  # Also lint the files behind the integration build tag.
+  build-tags:
+    - integration
+
+linters:
+  enable:
+    - bodyclose
+    - errorlint     # enforces errors.Is/As and %w wrapping
+    - gocritic
+    - misspell
+    - nilerr
+    - revive
+    - rowserrcheck  # catches a forgotten rows.Err()
+    - sqlclosecheck
+    - unconvert
+    - unparam
+  exclusions:
+    paths:
+      # macOS writes AppleDouble sidecars ("._name.go") next to every file on
+      # exFAT volumes. The go tool ignores them, golangci-lint's loader does
+      # not and reports them as unparsable Go files.
+      - "(^|/)\\._"
+    rules:
+      # Table driven tests are allowed to be long and to shadow.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocritic
+
+formatters:
+  enable:
+    - gofmt
