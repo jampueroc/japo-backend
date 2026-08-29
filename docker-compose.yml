@@ -17,8 +17,12 @@ services:
       MARIADB_PASSWORD: ${DB_PASSWORD:-japo}
     ports:
       # Published so the natively running API (macOS dev) can reach it.
-      # Remove this block on the Pi if only the api container talks to it.
-      - "${DB_PORT:-3306}:3306"
+      # Bound to loopback by default: on the Pi the database must never be
+      # reachable from the LAN. Override with DB_BIND=0.0.0.0 if you really
+      # need it exposed.
+      - "${DB_BIND:-127.0.0.1}:${DB_PORT:-3306}:3306"
+    networks:
+      - japo
     volumes:
       - mariadb_data:/var/lib/mysql
       - ./my.cnf:/etc/mysql/conf.d/99-japo.cnf:ro
@@ -65,8 +69,15 @@ services:
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-json}
+      # Detrás del nginx del frontend toda petición llega desde la red `japo`.
+      # Sin esto el limitador por IP degenera en un único limitador global.
+      HTTP_TRUSTED_PROXIES: ${HTTP_TRUSTED_PROXIES:-}
     ports:
-      - "${API_PORT:-8080}:8080"
+      # Loopback por defecto: el frontend llega al API por la red `japo`, no por
+      # el puerto publicado. Éste queda para depurar desde la propia máquina.
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8080}:8080"
+    networks:
+      - japo
     deploy:
       resources:
         limits:
@@ -85,3 +96,15 @@ volumes:
     #   type: none
     #   o: bind
     #   device: /mnt/ssd/japo/mariadb
+
+# Red compartida con el frontend (japo-app), que la declara como `external`.
+# La subnet es explícita a propósito: en una máquina con muchos stacks el pool
+# por defecto de Docker (172.17-172.31) se agota, y entonces Docker pasa a
+# repartir desde 192.168.0.0/16, que puede solaparse con la LAN. Fijarla evita
+# esa lotería y hace que HTTP_TRUSTED_PROXIES sea predecible.
+networks:
+  japo:
+    name: ${JAPO_NETWORK:-japo_net}
+    ipam:
+      config:
+        - subnet: ${JAPO_SUBNET:-172.16.10.0/24}
