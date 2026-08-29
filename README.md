@@ -35,7 +35,9 @@ Pi.
 | Integration tests | `testcontainers-go` with the MariaDB module           |
 
 `CGO_ENABLED=0` everywhere: the binary is static and cross-compiles to
-`linux/arm64` from macOS with no C toolchain.
+`linux/arm64` from macOS with no C toolchain. The timezone database is compiled
+in via `time/tzdata`, so `time.LoadLocation` works even on a runtime image with
+no `/usr/share/zoneinfo` — the streak depends on it.
 
 ---
 
@@ -175,6 +177,11 @@ mean something else.
   happened to speak that year. It is a short string rather than a SQL enum, so
   adding an option is a deploy of the client, not a migration.
 - `birthday` is optional, `YYYY-MM-DD`, not in the future and not before 1900.
+- `timezone` is optional, an IANA name such as `America/Lima`, validated by
+  actually loading it rather than against a pattern — the only thing that
+  matters is whether this binary can resolve it later. `Local` is refused: it
+  resolves to wherever the server happens to be, which would tie one account's
+  streak to the box's own clock.
 
 The profile rides **inside** the user (`user.profile`), not beside it, so it
 cannot drift out of sync between the four endpoints that return a user:
@@ -316,10 +323,31 @@ The split with the web client is deliberate:
   `streakDays`.
 
 Activity is recorded on every login and on every progress write — including
-the two grading endpoints — and it is
-idempotent within a **UTC calendar day**: a second visit the same day changes
-nothing, the next day extends the streak, and a gap resets `streakDays` to 1
-while `distinctLoginDays` keeps growing.
+the two grading endpoints — and it is idempotent within a **calendar day**: a
+second visit the same day changes nothing, the next day extends the streak, and
+a gap resets `streakDays` to 1 while `distinctLoginDays` keeps growing.
+
+The day is cut in the **user's own timezone**, taken from `profile.timezone`,
+falling back to UTC for accounts that never sent one. This is not cosmetic: in
+the Americas a UTC day turns over in the early evening, so two sessions the
+same evening — one at seven, one at nine — counted as two separate days and
+inflated both the streak and `distinctLoginDays`.
+
+A stored day that is *ahead* of today is treated as "already active today"
+rather than as a gap. That happens when someone flies west or edits their
+timezone to one further behind, and treating it as a break would reset a streak
+the user did nothing to lose. It grants no free days either, and the stored day
+never walks backwards.
+
+The **registration day is always recorded in UTC**, because the profile — and
+with it the timezone — arrives afterwards. It self-corrects on the next
+activity, at the cost of at most one odd day.
+
+> Editing the timezone can shift the day boundary once, which is enough to
+> manufacture a single extra day. It is a bounded, self-inflicted quirk in a
+> personal learning app, and the alternative — trusting a zone sent on every
+> request — would put the streak back in the client's hands, which is precisely
+> what keeping it server-side avoids.
 
 ### Email verification
 

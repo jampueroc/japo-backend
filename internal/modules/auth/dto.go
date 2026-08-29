@@ -39,6 +39,9 @@ type ProfileResponse struct {
 	Gender string `json:"gender"`
 	// Birthday is a plain YYYY-MM-DD, or absent when not given.
 	Birthday string `json:"birthday,omitempty"`
+	// Timezone is the IANA name the streak's day is cut in, absent when
+	// the user never sent one (the day is then cut in UTC).
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // ProfileRequest is the PUT /profile payload.
@@ -48,11 +51,14 @@ type ProfileRequest struct {
 	// Birthday is optional. An empty string and a missing field both mean
 	// "not given".
 	Birthday string `json:"birthday" validate:"omitempty,datetime=2006-01-02"`
+	// Timezone is optional and set once at onboarding. It is validated
+	// against the real IANA database, not a pattern.
+	Timezone string `json:"timezone" validate:"omitempty,max=64"`
 }
 
 // profile maps the DTO onto the use case input.
 func (r ProfileRequest) profile() (Profile, error) {
-	result := Profile{Name: r.Name, Gender: Gender(r.Gender)}
+	result := Profile{Name: r.Name, Gender: Gender(r.Gender), Timezone: r.Timezone}
 	if strings.TrimSpace(r.Birthday) == "" {
 		return result, nil
 	}
@@ -142,6 +148,7 @@ func NewUserResponse(user User) UserResponse {
 		if !user.Profile.BirthDate.IsZero() {
 			profile.Birthday = user.Profile.BirthDate.UTC().Format(dateLayoutJSON)
 		}
+		profile.Timezone = user.Profile.Timezone
 		response.Profile = &profile
 	}
 	return response

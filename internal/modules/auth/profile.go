@@ -66,7 +66,12 @@ func normaliseProfile(profile Profile, now time.Time) (Profile, error) {
 		return Profile{}, invalidProfile("that is not a gender this server stores")
 	}
 
-	normalised := Profile{Name: name, Gender: profile.Gender}
+	timezone, err := normaliseTimezone(profile.Timezone)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	normalised := Profile{Name: name, Gender: profile.Gender, Timezone: timezone}
 	if profile.BirthDate.IsZero() {
 		return normalised, nil
 	}
@@ -82,6 +87,30 @@ func normaliseProfile(profile Profile, now time.Time) (Profile, error) {
 
 	normalised.BirthDate = birthDate
 	return normalised, nil
+}
+
+// normaliseTimezone checks the IANA name against the actual database rather
+// than a regular expression: the only thing that matters is whether this
+// binary can resolve it later, and that is exactly what LoadLocation answers.
+func normaliseTimezone(timezone string) (string, error) {
+	timezone = strings.TrimSpace(timezone)
+	if timezone == "" {
+		return "", nil
+	}
+
+	if len(timezone) > MaxTimezoneLength {
+		return "", invalidProfile("the timezone name is too long")
+	}
+	// "Local" resolves to whatever zone the SERVER happens to be in, which
+	// would silently make one account's streak depend on where the box is.
+	if strings.EqualFold(timezone, "Local") {
+		return "", invalidProfile("the timezone must be a specific IANA zone, such as America/Lima")
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return "", invalidProfile("that is not a timezone this server knows")
+	}
+
+	return timezone, nil
 }
 
 // invalidProfile builds a client facing rejection. The messages are written

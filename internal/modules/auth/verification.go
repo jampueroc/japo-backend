@@ -94,7 +94,7 @@ func (s *service) VerifyEmail(ctx context.Context, email, code string) (Session,
 	}
 
 	// Confirming the address is activity too.
-	if touched, err := s.repo.TouchActivity(ctx, verified.ID, UTCDay(now)); err == nil {
+	if touched, err := s.repo.TouchActivity(ctx, verified.ID, DayIn(now, verified.Profile.Location())); err == nil {
 		verified = touched
 	} else {
 		s.logger.WarnContext(ctx, "could not record activity on verification",

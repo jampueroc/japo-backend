@@ -178,3 +178,132 @@ func TestServiceSaveProfileAcceptsTodayAsBirthday(t *testing.T) {
 		t.Fatalf("got %v, want today truncated to a day", saved.Profile.BirthDate)
 	}
 }
+
+// --- timezone --------------------------------------------------------------
+
+// The whole point of storing a zone: the calendar day has to turn over at the
+// user's midnight, not at the server's.
+func TestDayInCutsAtTheUsersMidnight(t *testing.T) {
+	t.Parallel()
+
+	lima, err := time.LoadLocation("America/Lima") // UTC-5, no DST
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+
+	// 21:30 on the 25th in Lima is already 02:30 on the 26th in UTC. This
+	// is exactly the case that was inflating streaks: an evening session
+	// counted as the next day.
+	evening := time.Date(2026, 8, 26, 2, 30, 0, 0, time.UTC)
+
+	if got := auth.UTCDay(evening); got.Day() != 26 {
+		t.Fatalf("got UTC day %v, want the 26th", got)
+	}
+	if got := auth.DayIn(evening, lima); got.Day() != 25 {
+		t.Fatalf("got Lima day %v, want the 25th: an evening session must not count as tomorrow", got)
+	}
+}
+
+func TestProfileLocation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		timezone string
+		want     string
+	}{
+		{name: "no zone falls back to UTC", timezone: "", want: "UTC"},
+		{name: "a real zone", timezone: "Europe/Madrid", want: "Europe/Madrid"},
+		// A zone dropped by a tzdata update must not stop someone
+		// practising; it degrades to UTC instead of failing.
+		{name: "an unknown zone degrades to UTC", timezone: "Mars/Olympus_Mons", want: "UTC"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			profile := auth.Profile{Timezone: tc.timezone}
+			if got := profile.Location().String(); got != tc.want {
+				t.Fatalf("got location %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestServiceSaveProfileTimezone(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stores a real IANA zone", func(t *testing.T) {
+		t.Parallel()
+
+		user := verifiedUser()
+		h := newHarness(t, harnessOptions{user: &user})
+
+		saved, err := h.service.SaveProfile(context.Background(), 42, auth.Profile{
+			Name: "Jorge", Gender: auth.GenderMale, Timezone: " America/Lima ",
+		})
+		if err != nil {
+			t.Fatalf("save profile: %v", err)
+		}
+		if saved.Profile.Timezone != "America/Lima" {
+			t.Fatalf("got timezone %q, want it trimmed and stored", saved.Profile.Timezone)
+		}
+	})
+
+	for _, tc := range []struct {
+		name     string
+		timezone string
+	}{
+		{name: "an invented zone", timezone: "Mars/Olympus_Mons"},
+		{name: "an abbreviation rather than an IANA name", timezone: "PST"},
+		// "Local" resolves to wherever the server happens to be, which
+		// would tie one account's streak to the box's own clock.
+		{name: "Local", timezone: "Local"},
+		{name: "one that is too long", timezone: strings.Repeat("a", auth.MaxTimezoneLength+1)},
+	} {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			user := verifiedUser()
+			h := newHarness(t, harnessOptions{user: &user})
+
+			_, err := h.service.SaveProfile(context.Background(), 42, auth.Profile{
+				Name: "Jorge", Gender: auth.GenderMale, Timezone: tc.timezone,
+			})
+			if kind := apperror.KindOf(err); err == nil || kind != apperror.KindValidation {
+				t.Fatalf("got %v (kind %v), want a validation error", err, kind)
+			}
+		})
+	}
+}
+
+// Login has to record the day in the account's zone, not the server's.
+func TestServiceLoginRecordsTheDayInTheUsersZone(t *testing.T) {
+	t.Parallel()
+
+	const password = "supersecret1"
+
+	// fixedNow is 23:30 UTC on the 21st, which in Tokyo is already the 22nd.
+	user := unverifiedUser()
+	user.EmailVerifiedAt = fixedNow
+	user.PasswordHash = "hashed:" + password
+	user.Profile = auth.Profile{Name: "Jorge", Gender: auth.GenderMale, Timezone: "Asia/Tokyo"}
+
+	h := newHarness(t, harnessOptions{user: &user})
+
+	if _, err := h.service.Login(context.Background(),
+		auth.Credentials{Email: testEmail, Password: password}); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	want := auth.DayIn(fixedNow, tokyo)
+	if !h.repo.lastTouchDay.Equal(want) {
+		t.Fatalf("recorded day %v, want %v (the account's zone, not UTC %v)",
+			h.repo.lastTouchDay, want, auth.UTCDay(fixedNow))
+	}
+}

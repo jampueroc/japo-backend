@@ -188,8 +188,9 @@ func (s *service) Login(ctx context.Context, creds Credentials) (Session, error)
 	}
 
 	// A successful login is activity: it may extend the streak and unlock
-	// content that depends on distinct login days.
-	updated, err := s.repo.TouchActivity(ctx, user.ID, UTCDay(s.clock()))
+	// content that depends on distinct login days. The day is cut in the
+	// user's own zone, so their midnight is the one that counts.
+	updated, err := s.repo.TouchActivity(ctx, user.ID, DayIn(s.clock(), user.Profile.Location()))
 	if err != nil {
 		return Session{}, fmt.Errorf("login: record activity: %w", err)
 	}
@@ -245,13 +246,25 @@ func (s *service) Me(ctx context.Context, userID int64) (Me, error) {
 
 // RecordActivity marks the user as active today. It is idempotent within a
 // calendar day, so callers may invoke it on every write.
+//
+// The account is read first because the calendar day depends on the zone
+// stored on it: without that read the streak would be cut in UTC for someone
+// who told us where they are.
 func (s *service) RecordActivity(ctx context.Context, userID int64) (User, error) {
 	id, err := valueobject.NewID(userID)
 	if err != nil {
 		return User{}, err
 	}
 
-	user, err := s.repo.TouchActivity(ctx, id, UTCDay(s.clock()))
+	current, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return User{}, ErrUserNotFound
+		}
+		return User{}, fmt.Errorf("record activity: look up account: %w", err)
+	}
+
+	user, err := s.repo.TouchActivity(ctx, id, DayIn(s.clock(), current.Profile.Location()))
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return User{}, ErrUserNotFound

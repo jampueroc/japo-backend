@@ -43,7 +43,7 @@ var (
 
 const (
 	selectUserColumns = `id, email, password_hash, email_verified_at, name, gender, birth_date,
-		last_active_date, distinct_login_days, streak_days, created_at, updated_at`
+		timezone, last_active_date, distinct_login_days, streak_days, created_at, updated_at`
 
 	insertUserQuery = `
 		INSERT INTO users (email, password_hash, last_active_date, distinct_login_days, streak_days)
@@ -53,20 +53,26 @@ const (
 
 	selectUserByEmailQuery = `SELECT ` + selectUserColumns + ` FROM users WHERE email = ?`
 
-	// Idempotent within a calendar day. The three assignments read
-	// last_active_date before it is overwritten: MariaDB evaluates the SET
-	// list left to right, so the column must be assigned last. `<=>` is the
-	// NULL safe equality, which makes a user who has never been active fall
-	// into the ELSE branch instead of yielding NULL.
+	// Idempotent within a calendar day. The assignments read last_active_date
+	// before it is overwritten: MariaDB evaluates the SET list left to
+	// right, so the column must be assigned last.
+	//
+	// The comparison is >= rather than an equality: a stored day that is
+	// AHEAD of today is not a gap. It happens when someone flies west, or
+	// edits their timezone to one further behind, and treating it as a gap
+	// would reset a streak the user did nothing to lose. Counting it as
+	// "already active today" is the conservative reading: no free days
+	// either. GREATEST keeps the stored day from walking backwards.
 	touchActivityQuery = `
 		UPDATE users
-		SET distinct_login_days = distinct_login_days + IF(last_active_date <=> ?, 0, 1),
+		SET distinct_login_days = distinct_login_days
+		        + IF(last_active_date IS NOT NULL AND last_active_date >= ?, 0, 1),
 		    streak_days = CASE
-		        WHEN last_active_date <=> ? THEN streak_days
+		        WHEN last_active_date IS NOT NULL AND last_active_date >= ? THEN streak_days
 		        WHEN last_active_date <=> DATE_SUB(?, INTERVAL 1 DAY) THEN streak_days + 1
 		        ELSE 1
 		    END,
-		    last_active_date = ?
+		    last_active_date = GREATEST(COALESCE(last_active_date, ?), ?)
 		WHERE id = ?`
 )
 
@@ -120,7 +126,7 @@ func (r *MySQLRepository) FindByID(ctx context.Context, id valueobject.ID) (User
 func (r *MySQLRepository) TouchActivity(ctx context.Context, id valueobject.ID, day time.Time) (User, error) {
 	today := day.UTC().Format(dateLayout)
 
-	result, err := r.db.ExecContext(ctx, touchActivityQuery, today, today, today, today, id.Int64())
+	result, err := r.db.ExecContext(ctx, touchActivityQuery, today, today, today, today, today, id.Int64())
 	if err != nil {
 		return User{}, fmt.Errorf("update user activity: %w", err)
 	}
@@ -142,6 +148,7 @@ func (r *MySQLRepository) queryOne(ctx context.Context, query string, args ...an
 		name       sql.NullString
 		gender     sql.NullString
 		birthDate  sql.NullTime
+		timezone   sql.NullString
 		lastActive sql.NullTime
 		user       User
 	)
@@ -154,6 +161,7 @@ func (r *MySQLRepository) queryOne(ctx context.Context, query string, args ...an
 		&name,
 		&gender,
 		&birthDate,
+		&timezone,
 		&lastActive,
 		&user.Activity.DistinctLoginDays,
 		&user.Activity.StreakDays,
@@ -176,7 +184,11 @@ func (r *MySQLRepository) queryOne(ctx context.Context, query string, args ...an
 	if verifiedAt.Valid {
 		user.EmailVerifiedAt = verifiedAt.Time.UTC()
 	}
-	user.Profile = Profile{Name: name.String, Gender: Gender(gender.String)}
+	user.Profile = Profile{
+		Name:     name.String,
+		Gender:   Gender(gender.String),
+		Timezone: timezone.String,
+	}
 	if birthDate.Valid {
 		user.Profile.BirthDate = UTCDay(birthDate.Time)
 	}

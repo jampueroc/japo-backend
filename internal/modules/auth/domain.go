@@ -97,6 +97,24 @@ type Profile struct {
 	Gender Gender
 	// BirthDate is the zero value when the user did not give one.
 	BirthDate time.Time
+	// Timezone is the IANA name whose midnight ends the streak's day, empty
+	// when the user never sent one. Without it the day is cut in UTC, which
+	// in the Americas means the day turns over in the early evening.
+	Timezone string
+}
+
+// Location resolves the zone the calendar day is cut in, falling back to UTC
+// when there is none or the stored name is no longer in the database. A zone
+// that vanished from a tzdata update must not stop someone practising.
+func (p Profile) Location() *time.Location {
+	if p.Timezone == "" {
+		return time.UTC
+	}
+	location, err := time.LoadLocation(p.Timezone)
+	if err != nil {
+		return time.UTC
+	}
+	return location
 }
 
 // Complete reports whether onboarding has been done. The name is what marks
@@ -110,6 +128,9 @@ const (
 	// MinBirthYear rejects a date that is obviously a typo rather than a
 	// birthday.
 	MinBirthYear = 1900
+	// MaxTimezoneLength matches the users.timezone column. The longest
+	// real IANA name is well under it.
+	MaxTimezoneLength = 64
 )
 
 // User is the account entity.
@@ -293,9 +314,14 @@ type Service interface {
 	ResetPassword(ctx context.Context, token, newPassword string) error
 }
 
-// UTCDay truncates t to midnight UTC, which is the day boundary used by
-// every activity counter.
-func UTCDay(t time.Time) time.Time {
-	utc := t.UTC()
-	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+// UTCDay truncates t to midnight UTC. It is the fallback boundary, used for
+// accounts that never told us where they are.
+func UTCDay(t time.Time) time.Time { return DayIn(t, time.UTC) }
+
+// DayIn truncates t to midnight in the given zone, and returns that day as a
+// plain date. What the activity counters compare is a calendar day, not an
+// instant, so the result is deliberately zone-free once computed.
+func DayIn(t time.Time, location *time.Location) time.Time {
+	local := t.In(location)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
 }

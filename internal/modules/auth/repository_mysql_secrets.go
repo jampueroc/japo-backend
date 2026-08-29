@@ -19,7 +19,7 @@ const (
 
 	updatePasswordQuery = `UPDATE users SET password_hash = ? WHERE id = ?`
 
-	saveProfileQuery = `UPDATE users SET name = ?, gender = ?, birth_date = ? WHERE id = ?`
+	saveProfileQuery = `UPDATE users SET name = ?, gender = ?, birth_date = ?, timezone = ? WHERE id = ?`
 
 	putVerificationQuery = `
 		INSERT INTO email_verification_codes (user_id, code_hash, attempts, expires_at, consumed_at)
@@ -91,8 +91,13 @@ func (r *MySQLRepository) SaveProfile(ctx context.Context, id valueobject.ID, pr
 		birthDate = profile.BirthDate.UTC().Format(dateLayout)
 	}
 
+	var timezone any
+	if profile.Timezone != "" {
+		timezone = profile.Timezone
+	}
+
 	result, err := r.db.ExecContext(ctx, saveProfileQuery,
-		profile.Name, string(profile.Gender), birthDate, id.Int64())
+		profile.Name, string(profile.Gender), birthDate, timezone, id.Int64())
 	if err != nil {
 		return User{}, fmt.Errorf("save profile: %w", err)
 	}

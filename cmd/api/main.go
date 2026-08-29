@@ -13,6 +13,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// The timezone database, compiled into the binary. Streak days are cut
+	// in the user's own zone, so time.LoadLocation has to work wherever
+	// this runs, including a runtime image with no /usr/share/zoneinfo.
+	_ "time/tzdata"
 
 	"github.com/gofiber/fiber/v2"
 

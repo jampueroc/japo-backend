@@ -173,3 +173,72 @@ func TestMySQLRepositoryTouchActivity(t *testing.T) {
 		}
 	})
 }
+
+// A stored day that is AHEAD of today is not a gap. It happens when someone
+// flies west, or edits their timezone to one further behind, and the old
+// equality comparison treated it as a break: the user lost a streak they had
+// done nothing to lose. This pins the SQL against the real engine.
+func TestMySQLRepositoryTouchActivityWhenTheDayMovesBackwards(t *testing.T) {
+	testsupport.Truncate(t, testDB, "progress", "email_verification_codes", "password_reset_tokens", "users")
+
+	ctx := context.Background()
+	repo := auth.NewMySQLRepository(testDB)
+
+	created, err := repo.Create(ctx, auth.User{
+		Email:        valueobject.MustEmail("traveller@example.com"),
+		PasswordHash: "$2a$10$fakehashfakehashfakeha",
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	day3 := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+
+	// Three consecutive days: the streak is 3.
+	for i := range 3 {
+		if _, err := repo.TouchActivity(ctx, created.ID, day3.AddDate(0, 0, i)); err != nil {
+			t.Fatalf("touch activity: %v", err)
+		}
+	}
+	stored, err := repo.FindByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if stored.Activity.StreakDays != 3 || stored.Activity.DistinctLoginDays != 3 {
+		t.Fatalf("got %+v, want a streak of 3 over 3 days", stored.Activity)
+	}
+
+	t.Run("a day in the past keeps the streak instead of resetting it", func(t *testing.T) {
+		// The user crosses a date line westward: "today" is now yesterday.
+		updated, err := repo.TouchActivity(ctx, created.ID, day3.AddDate(0, 0, 1))
+		if err != nil {
+			t.Fatalf("touch activity: %v", err)
+		}
+		if updated.Activity.StreakDays != 3 {
+			t.Fatalf("got streak %d, want it kept at 3: travelling is not a missed day",
+				updated.Activity.StreakDays)
+		}
+		// And no free day either: it is not a new calendar day.
+		if updated.Activity.DistinctLoginDays != 3 {
+			t.Fatalf("got %d distinct days, want 3: going back must not add one",
+				updated.Activity.DistinctLoginDays)
+		}
+		// The stored day must not walk backwards.
+		if want := day3.AddDate(0, 0, 2); !updated.Activity.LastActiveDate.Equal(want) {
+			t.Fatalf("got last active %v, want it left at %v", updated.Activity.LastActiveDate, want)
+		}
+	})
+
+	t.Run("and the streak keeps growing afterwards", func(t *testing.T) {
+		updated, err := repo.TouchActivity(ctx, created.ID, day3.AddDate(0, 0, 3))
+		if err != nil {
+			t.Fatalf("touch activity: %v", err)
+		}
+		if updated.Activity.StreakDays != 4 {
+			t.Fatalf("got streak %d, want 4", updated.Activity.StreakDays)
+		}
+		if updated.Activity.DistinctLoginDays != 4 {
+			t.Fatalf("got %d distinct days, want 4", updated.Activity.DistinctLoginDays)
+		}
+	})
+}
