@@ -93,7 +93,8 @@ pipeline {
                 sh '''
                     set -eu
                     for i in $(seq 1 40); do
-                        status=$(docker inspect -f '{{.State.Health.Status}}' japo-api 2>/dev/null || echo missing)
+                        status=$(docker inspect -f '{{.State.Health.Status}}' japo-api 2>/dev/null | tail -n1)
+                        status=${status:-missing}
                         case "$status" in
                             healthy) echo "japo-api healthy"; exit 0 ;;
                             unhealthy) echo "japo-api unhealthy"; break ;;
