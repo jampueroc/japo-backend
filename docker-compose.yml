@@ -72,6 +72,30 @@ services:
       # Detrás del nginx del frontend toda petición llega desde la red `japo`.
       # Sin esto el limitador por IP degenera en un único limitador global.
       HTTP_TRUSTED_PROXIES: ${HTTP_TRUSTED_PROXIES:-}
+      # --- Correo ---------------------------------------------------------
+      # Con MAIL_DRIVER=log el código de verificación se escribe en el log en
+      # vez de enviarse: cómodo en desarrollo, inservible en producción.
+      MAIL_DRIVER: ${MAIL_DRIVER:-log}
+      MAIL_FROM: ${MAIL_FROM:-japo-api@localhost}
+      MAIL_TIMEOUT: ${MAIL_TIMEOUT:-10s}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      # El enlace de "he olvidado mi contraseña" se construye con estas dos. Si
+      # APP_PUBLIC_URL no apunta a donde el usuario abre la app de verdad, el
+      # correo sale con un enlace que no lleva a ninguna parte.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:4400}
+      APP_RESET_PATH: ${APP_RESET_PATH:-/reset-password}
+      # --- Verificación de email -------------------------------------------
+      # Ojo: con APP_ENV=production, poner esto a true mientras MAIL_DRIVER siga
+      # en log hace que el API se niegue a arrancar (validación de config), y con
+      # razón: sería una puerta que nadie puede cruzar.
+      AUTH_REQUIRE_VERIFIED_EMAIL: ${AUTH_REQUIRE_VERIFIED_EMAIL:-false}
+      AUTH_VERIFICATION_CODE_TTL: ${AUTH_VERIFICATION_CODE_TTL:-15m}
+      AUTH_MAX_VERIFICATION_ATTEMPTS: ${AUTH_MAX_VERIFICATION_ATTEMPTS:-5}
+      AUTH_RESET_TOKEN_TTL: ${AUTH_RESET_TOKEN_TTL:-1h}
     ports:
       # Loopback por defecto: el frontend llega al API por la red `japo`, no por
       # el puerto publicado. Éste queda para depurar desde la propia máquina.
